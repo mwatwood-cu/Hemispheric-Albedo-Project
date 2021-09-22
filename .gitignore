@@ -131,3 +131,7 @@ dmypy.json
 # Data Files
 .nc
 *.nc
+*.png
+*.xml
+*.iml
+*.csv
