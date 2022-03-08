@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 
 def create_lat_weights():
-    lat_weights = pd.read_csv("lat_weights.csv", header=0)
+    lat_weights = pd.read_csv("./Data/lat_weights.csv", header=0)
     lat_weights = lat_weights.to_numpy()
 
     lats = lat_weights[0:-1, 0]
@@ -68,11 +68,12 @@ def create_monthly_sorted_data(data):
             year_count = year_count + 1
         month_data[year_count, data[i].time.dt.month.data-1] = data[i].data
 
-    dt_index = pd.period_range("1/15/2000", periods=12, freq="M")
+    # dt_index = pd.period_range("1/15/2000", periods=12, freq="M")
+    dt_index = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     df = pd.DataFrame(month_data, columns=dt_index)
     df = remove_non_full_rows(df)
     return df
-    
+
 def remove_non_full_rows(df):
     num_rows = df.shape[0]   
     # Cleaning up and removing any rows that contain NaN
@@ -136,3 +137,6 @@ def remove_incomplete_years(time_series):
             one_year_data = np.empty((12,1))
             one_year_data[:] = np.NaN
     return time_series
+
+#def create_dataframe_with_month_and_year(date_series, variable_name):
+
