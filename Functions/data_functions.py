@@ -1,3 +1,4 @@
+from regex import D
 import xarray as xr
 import numpy as np
 import pandas as pd
@@ -6,17 +7,12 @@ import seaborn as sns
 from scipy.interpolate import CubicSpline
 import matplotlib.pyplot as plt
 
+LEAP_YEAR_CORRECTION = (366/1461)/0.25
+NON_LEAP_YEAR_CORRECTION = (365/1461)/0.25
 
-def clean_CERES_data(dataset):
-    years = dataset.time.dt.year
-    month_count = years.groupby("time.year").count()
-    #for dat in month_count.data:
-        #if(dat)<12:
-            #Remove?
-            # 
-    
-    #Return a modified dataset
-    return dataset  
+def clean_CERES_data(dataset, start, end):
+    data = dataset.sel(time=slice(start, end))
+    return data
 
 def create_lat_weights():
     lat_weights = pd.read_csv("./Data/lat_weights.csv", header=0)
@@ -32,31 +28,87 @@ def create_lat_weights():
 
     return vals
 
-def create_CERES_hemisphere_data(dataset, category):
-    specific_dat = dataset[category]
-    month_length = dataset.time.dt.days_in_month
-    time_weights = time_weights = month_length.groupby("time.year")/month_length.groupby("time.year").sum()
-    specific_t_weighted = specific_dat*time_weights
+def make_leap_year_addition_kernels():
+    kernels = np.zeros((4,13))
+    # First year gets 1/4 day from next year
+    kernels[0,12] = 0.25
+    # Remove that from second year
+    kernels[1,0] = -0.25
+    # Add 1/2 day from year 3
+    kernels[1,12] = 0.50
+    # Remove that from year 3
+    kernels[2,1] = -0.50
+    # Add 3/4 of a day from year 4
+    kernels[2,12] = 0.75
+    # Remove that from year 4
+    kernels[3,0] = -0.75
 
+    return kernels
+
+def apply_time_averaging(dataset, use_leap_year_adjust=True, feb_leap_year_correction=27.65, 
+    feb_non_leap_year_correction=28.45, running_length=0):
+
+    month_length = dataset.time.dt.days_in_month
+    '''
+    if(use_leap_year_adjust):
+        month_length.values = month_length.values.astype("float")
+        month_length[month_length==28] = feb_non_leap_year_correction
+        month_length[month_length==29] = feb_leap_year_correction
+    time_weights = month_length.groupby("time.year")/month_length.groupby("time.year").sum()'''
+
+    time_weights = month_length.values.astype("float")
+    addition_kernels = make_leap_year_addition_kernels()
+    
+
+    if(running_length != 0):
+        if(len(dataset.shape)==3):
+            # Create the running avg data
+            t_weighted = np.array([np.average(dataset[x:x+running_length],  \
+                weights=time_weights[x:x+running_length], axis=0)for x in range(len(dataset)-running_length)])
+        elif(len(dataset.shape)==1):
+            t_weighted =np.array([np.average(dataset[x:x+running_length],  \
+                weights=time_weights[x:x+running_length])for x in range(len(dataset)-running_length)]) 
+        # Shorten the original data to match the running avg length
+        specific_t_weighted = dataset[:len(dataset)-running_length,:,:]
+        specific_t_weighted.data = t_weighted
+    else:
+        # Make a yearly avg
+        specific_t_weighted = dataset*time_weights
+        specific_t_weighted = specific_t_weighted.groupby("time.year").sum()
+
+    return specific_t_weighted
+
+def apply_spatial_weights(dataset, low_lat=0, high_lat=90):
     lat_weights = create_lat_weights()
-    space_weights = xr.DataArray(data=lat_weights, coords=[specific_t_weighted.lat], dims=["lat"])
+
+    space_weights = xr.DataArray(data=lat_weights, coords=[dataset.lat], dims=["lat"])
     space_weights.name = "weights"  
 
-    nh_t = specific_t_weighted.sel(lat=slice(0, 90))
-    nh_t_w = nh_t.weighted(space_weights)
-    sh_t = specific_t_weighted.sel(lat=slice(-90, 0))
-    sh_t_w = sh_t.weighted(space_weights)
-    all_t_w = specific_t_weighted.weighted(space_weights)
+    slice_of_data = dataset.sel(lat=slice(low_lat, high_lat))
+    weighted_slice = slice_of_data.weighted(space_weights)
 
-    nh_ts_mean = nh_t_w.mean(("lat","lon"))
-    sh_ts_mean = sh_t_w.mean(("lat","lon"))
-    all_ts_mean = all_t_w.mean(("lat","lon"))
+    mean_slice = weighted_slice.mean(("lat","lon"))
+    return mean_slice
 
-    nh_yearly = nh_ts_mean.groupby("time.year").sum()
-    sh_yearly = sh_ts_mean.groupby("time.year").sum()
-    all_yearly = all_ts_mean.groupby("time.year").sum()
+def create_CERES_hemisphere_data(dataset, category, use_time_weighting=True, use_spatial_weighting=True,
+    remove_leap_year=True, leap_year_correction=27.65, non_leap_year_correction=28.45, running_avg=False, 
+    running_length=12, start="jan"):
+    specific_dat = dataset[category]
+    
+    if(start=="mar"):
+        dataset = clean_CERES_data(dataset, "2000-03", "2021-02")
+    else:
+        dataset = clean_CERES_data(dataset, "2001-01", "2021-12")
 
-    ds_new = xr.Dataset({"nh":nh_yearly, "sh":sh_yearly, "global":all_yearly})
+    specific_t_weighted = apply_time_averaging(specific_dat, use_leap_year_adjust=remove_leap_year, 
+        feb_leap_year_correction=leap_year_correction, feb_non_leap_year_correction=non_leap_year_correction,
+        use_running_avg=running_avg, running_length=running_length)
+
+    nh_ts_mean = apply_spatial_weights(specific_t_weighted, low_lat=0, high_lat=90)
+    sh_ts_mean = apply_spatial_weights(specific_t_weighted, low_lat=-90, high_lat=0)
+    all_ts_mean = apply_spatial_weights(specific_t_weighted, low_lat=-90, high_lat=90)
+
+    ds_new = xr.Dataset({"nh":nh_ts_mean, "sh":sh_ts_mean, "global":all_ts_mean})
     return ds_new
 
 def create_yearly_sorted_data(time_series_data):

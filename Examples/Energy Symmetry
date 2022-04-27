@@ -1,0 +1,90 @@
+from cgi import test
+import xarray as xr
+import numpy as np
+import pandas as pd
+import cartopy.crs as ccrs
+from matplotlib import pyplot as plt
+import seaborn as sns
+import sys, os
+
+curdir = os.getcwd()
+sys.path.insert(0, curdir+"/Functions")
+
+# My built function imports
+from data_functions import *
+from plotting_functions import *
+
+file_name = "./Data/CERES_EBAF-TOA_Full.nc"
+ds = xr.open_dataset(file_name)
+
+specific_dat = ds["toa_sw_all_mon"]
+month_length = ds.time.dt.days_in_month
+time_weights = month_length.groupby("time.year")/month_length.groupby("time.year").sum()
+specific_t_weighted = specific_dat*time_weights
+specific_t_weighted = specific_t_weighted.groupby("time.year").sum()
+
+lat_weights = create_lat_weights()
+space_weights = xr.DataArray(data=lat_weights, coords=[specific_t_weighted.lat], dims=["lat"])
+space_weights.name = "weights"  
+full_weighted = specific_t_weighted.weighted(space_weights)
+
+sym_lat = np.zeros(len(specific_t_weighted.year))
+# Find mid point average per year
+for index, cur_year in enumerate(specific_t_weighted.year):
+    one_year = specific_t_weighted.sel(year=cur_year)
+    lon_average = one_year.mean("lon")
+    weighted_dat = space_weights*lon_average
+    sum_by_year = weighted_dat.sum("lat")
+    percent_by_year = weighted_dat.cumsum("lat")/sum_by_year
+
+    min_finding = abs(percent_by_year-0.5)
+    # Idea interpolate to find true lat point
+    found = min_finding.where(min_finding == min_finding.min(), drop=True)
+    sym_lat[index] = found.lat.values[0]
+
+# Plot
+plt.plot(specific_t_weighted.year, sym_lat)
+plt.ylim((-10, 10))
+plt.ylabel("Energy Symmetry Location (degrees)")
+plt.xticks((2000, 2003, 2006, 2009, 2012, 2015, 2018, 2021))
+plt.xlabel("Year")
+plt.title("Albedo Energy Symmetry Location")
+
+test_year = 2001
+sym_lat_lon = np.zeros((2,len(specific_t_weighted.lon)))
+first_year_lat_lon = specific_t_weighted.sel(year=test_year)
+for index, cur_lon in enumerate(first_year_lat_lon.lon):
+    lat_line = first_year_lat_lon.sel(lon=cur_lon)
+    lat_line_weighted = lat_line*space_weights
+    total = lat_line_weighted.sum("lat")
+    percent = lat_line_weighted.cumsum("lat")/total
+    min_finding = abs(percent-0.5)
+    found = min_finding.where(min_finding == min_finding.min(), drop=True)
+    sym_lat_lon[0,index] = cur_lon
+    sym_lat_lon[1,index] = found.lat.values[0]
+
+# One Year Plot
+ax = plt.axes(projection=ccrs.PlateCarree())
+ax.coastlines()
+plt.plot(sym_lat_lon[0,:], sym_lat_lon[1,:], color="red", transform=ccrs.PlateCarree())
+eq = np.zeros_like(sym_lat_lon[0,:])
+plt.plot(sym_lat_lon[0,:], eq,linewidth=1, color="gray", transform=ccrs.PlateCarree())
+plt.ylim(-10,10)
+
+test_dat = specific_t_weighted.sel(year=test_year)
+test_dat.plot()
+
+#Idea Zonal plot
+
+#Idea correlate just the tropics and the whole globe to determine the impact of the tropics
+
+
+# Cloud Plot
+#cld_area = ds["cldarea_total_daynight_mon"]
+#cld_area_weighted = cld_area*time_weights
+#cld_area_weighted = cld_area_weighted.groupby("time.year").sum()
+#cld_Oh1 = cld_area_weighted.sel(year=2002)
+#cld_Oh1.plot()
+
+
+a=1
