@@ -6,6 +6,8 @@ import seaborn as sns
 from scipy.interpolate import CubicSpline
 import matplotlib.pyplot as plt
 
+LEAP_YEAR_CORRECTION = (366/1461)/0.25
+NON_LEAP_YEAR_CORRECTION = (365/1461)/0.25
 
 def clean_CERES_data(dataset):
     years = dataset.time.dt.year
@@ -32,11 +34,25 @@ def create_lat_weights():
 
     return vals
 
-def create_CERES_hemisphere_data(dataset, category):
+def create_CERES_hemisphere_data(dataset, category, remove_leap_year=True, leap_year_correction=27.65, 
+    non_leap_year_correction=28.45):
     specific_dat = dataset[category]
     month_length = dataset.time.dt.days_in_month
-    time_weights = time_weights = month_length.groupby("time.year")/month_length.groupby("time.year").sum()
+    if(remove_leap_year):
+        month_length.values = month_length.values.astype("float")
+        month_length[month_length==28] = non_leap_year_correction
+        month_length[month_length==29] = leap_year_correction
+    time_weights = month_length.groupby("time.year")/month_length.groupby("time.year").sum()
     specific_t_weighted = specific_dat*time_weights
+    specific_t_weighted = specific_t_weighted.groupby("time.year").sum()
+    '''
+    if(remove_leap_year):
+        for current_year in time_weights.year.values:
+            if(current_year%4==0):
+                specific_t_weighted["year"==current_year] = specific_t_weighted["year"==current_year]/LEAP_YEAR_CORRECTION
+            else:
+                specific_t_weighted["year"==current_year] = specific_t_weighted["year"==current_year]/NON_LEAP_YEAR_CORRECTION
+    '''
 
     lat_weights = create_lat_weights()
     space_weights = xr.DataArray(data=lat_weights, coords=[specific_t_weighted.lat], dims=["lat"])
@@ -52,11 +68,12 @@ def create_CERES_hemisphere_data(dataset, category):
     sh_ts_mean = sh_t_w.mean(("lat","lon"))
     all_ts_mean = all_t_w.mean(("lat","lon"))
 
-    nh_yearly = nh_ts_mean.groupby("time.year").sum()
-    sh_yearly = sh_ts_mean.groupby("time.year").sum()
-    all_yearly = all_ts_mean.groupby("time.year").sum()
+    #nh_yearly = nh_ts_mean.groupby("time.year").sum()
+    #sh_yearly = sh_ts_mean.groupby("time.year").sum()
+    #all_yearly = all_ts_mean.groupby("time.year").sum()
+    #ds_new = xr.Dataset({"nh":nh_yearly, "sh":sh_yearly, "global":all_yearly})
 
-    ds_new = xr.Dataset({"nh":nh_yearly, "sh":sh_yearly, "global":all_yearly})
+    ds_new = xr.Dataset({"nh":nh_ts_mean, "sh":sh_ts_mean, "global":all_ts_mean})
     return ds_new
 
 def create_yearly_sorted_data(time_series_data):

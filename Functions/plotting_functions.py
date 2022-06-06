@@ -164,3 +164,16 @@ def plot_CERES_asymmetry(sw_all, sw_clear, lw_all, lw_clear, net_all, net_clear,
     ax[1,3].plot(sw_clear.year, (cloud_tau["nh"]-cloud_tau["sh"])/cloud_tau["global"].mean()*100, '--k', label="Cloud Optical Depth")
     ax[1,3].set_title("Cloud Optical Depth")
     #ax[1,1].set_xticks([])
+
+# Data provided must be sorted by year
+def plot_hemisphere_and_global_by_year(data, title="NH-SH-Global", y_label="Solar Insolation W/m^2", fixed_ylim=False):
+    plt.plot(data.year, data["global"], 'k-x', label="Global")
+    plt.plot(data.year, data["nh"], 'g-x', label="NH")
+    plt.plot(data.year, data["sh"], 'b-x', label="SH")
+    plt.xticks([2000, 2003, 2006, 2009, 2012, 2015, 2018, 2021])
+    plt.xlabel("Year")
+    if(fixed_ylim):
+        plt.ylim([339.6, 340.4])
+    plt.ylabel(y_label)
+    plt.title(title)
+    plt.legend()
