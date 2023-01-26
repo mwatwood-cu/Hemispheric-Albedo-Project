@@ -1,12 +1,4 @@
-from cProfile import label
-from time import time
-from pandas.core.base import SpecificationError
-import scipy
-import xarray as xr
-import numpy as np
-import pandas as pd
 from matplotlib import pyplot as plt
-import seaborn as sns
 import cartopy.crs as ccrs
 
 from data_functions import *
