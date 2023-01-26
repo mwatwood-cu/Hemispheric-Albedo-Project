@@ -8,9 +8,8 @@ import pandas as pd
 from matplotlib import pyplot as plt
 import seaborn as sns
 import cartopy.crs as ccrs
-import cartopy
 
-from data_manipulation_functions import *
+from data_functions import *
 
 
 def plot_time_series_with_mean_std_once_per_year(time_series, title="", grid=True, axes=None):
@@ -169,7 +168,7 @@ def plot_CERES_asymmetry(sw_all, sw_clear, lw_all, lw_clear, net_all, net_clear,
 
 # Data provided must be sorted by year
 def plot_hemisphere_and_global_by_year(data, time_scale, title="NH-SH-Global", 
-    y_label="Solar Insolation W/m^2", fixed_ylim=False, set_x_ticks=True, axis=None,
+    y_label=r"Solar Ins. W/m$^2$", fixed_ylim=False, set_x_ticks=True, axis=None,
     set_short_x_ticks=False, include_trends=False):
     if(axis==None):
         axis=plt.gca()
@@ -179,13 +178,14 @@ def plot_hemisphere_and_global_by_year(data, time_scale, title="NH-SH-Global",
     if(set_x_ticks):
         axis.set_xticks([2000, 2003, 2006, 2009, 2012, 2015, 2018, 2021])
     if(set_short_x_ticks):
-        axis.set_xticks([2000, 2005, 2010, 2015, 2020])
-    axis.set_xlabel("Year")
+        axis.set_xticks([2005, 2010, 2015, 2020])
+    axis.set_xlabel("Year", fontsize=20)
     if(fixed_ylim):
         axis.set_ylim([339.6, 340.4])
-    axis.set_ylabel(y_label)
-    axis.set_title(title)
-    axis.legend()
+    axis.set_ylabel(y_label, fontsize=20)
+    axis.set_title(title, fontsize=20)
+    axis.tick_params(axis='both', which='major', labelsize=16)
+    axis.legend(fontsize=16, loc="upper right")
 
     if(include_trends):
         global_results = scipy.stats.linregress(time_scale, data["global"])
@@ -231,47 +231,14 @@ def plot_correction_data(years, difference_data, month):
     plt.plot(years, difference_data[2,month,:], 'rx-', label="First and Last Fix Jan Start")
     plt.legend()
 
-def plot_20_degree_zonal(zonal_data, location="global"):
-    #f,ax = plt.subplots(9,1, figsize=(15, 7))
+def plot_zonal_averaged_data_by_year(zonal_data, start_lat=-90, end_lat=90):
     plt.figure(figsize=(12,9))
 
-    if(location=="global" or location=="sh"):
-        plot_data_with_reg_line(zonal_data.year, zonal_data["neg_80"], title="-90 to -70",
-                            include_trends=True, y_label="Albedo Difference W/m^2", label="-80", tick_color="g") 
-        plot_data_with_reg_line(zonal_data.year, zonal_data["neg_60"], title="-70 to -50",
-                            include_trends=True, y_label="Albedo Difference W/m^2", label="-60", tick_color="gold") 
-        plot_data_with_reg_line(zonal_data.year, zonal_data["neg_40"], title="-50 to -30",
-                            include_trends=True, y_label="Albedo Difference W/m^2", label="-40", tick_color="r")  
-        plot_data_with_reg_line(zonal_data.year, zonal_data["neg_20"], title="-30 to -10",
-                            include_trends=True, y_label="Albedo Difference W/m^2", label="-20", tick_color="b")
+    for this_lat in zonal_data.lat:
+        plot_data_with_reg_line(zonal_data.year, zonal_data.sel(lat=this_lat), include_trends=True,
+                            title="", label=str(this_lat.data))
+    
+    plt.legend()
 
-    plot_data_with_reg_line(zonal_data.year, zonal_data["zero"], title="-10 to 10",
-                        include_trends=True, y_label="Albedo Difference W/m^2", label="0", tick_color="k") 
-
-    if(location=="global" or location=="nh"):
-        plot_data_with_reg_line(zonal_data.year, zonal_data["pos_20"], title="10 to 30", 
-                            include_trends=True, y_label="Albedo Difference W/m^2", label="20", tick_color="c")  
-        plot_data_with_reg_line(zonal_data.year, zonal_data["pos_40"], title="30 to 50",
-                            include_trends=True, y_label="Albedo Difference W/m^2", label="40", tick_color="y")  
-        plot_data_with_reg_line(zonal_data.year, zonal_data["pos_60"], title="50 to 70", 
-                            include_trends=True, y_label="Albedo Difference W/m^2", label="60", tick_color="m")  
-        plot_data_with_reg_line(zonal_data.year, zonal_data["pos_80"], title="70 to 90",
-                            include_trends=True, y_label="Albedo Difference W/m^2", label="80", tick_color="indigo")  
-     
-
-def plot_30_degree_zonal(zonal_data):
-    f,ax = plt.subplots(6,1, figsize=(15, 10))
-
-    plot_data_with_reg_line(zonal_data.year, zonal_data["neg_75"], title="-90 to -60", axis=ax[5],
-                        include_trends=True, y_label="W/m^2", label="-75", tick_color="b") 
-    plot_data_with_reg_line(zonal_data.year, zonal_data["neg_45"], title="-60 to -30", axis=ax[4],
-                        include_trends=True, y_label="W/m^2", label="-45", tick_color="b") 
-    plot_data_with_reg_line(zonal_data.year, zonal_data["neg_15"], title="-30 to 0", axis=ax[3],
-                        include_trends=True, y_label="W/m^2", label="-15", tick_color="b")  
-
-    plot_data_with_reg_line(zonal_data.year, zonal_data["pos_15"], title="0 to 30", axis=ax[2],
-                        include_trends=True, y_label="W/m^2", label="15", tick_color="g")  
-    plot_data_with_reg_line(zonal_data.year, zonal_data["pos_45"], title="30 to 60", axis=ax[1],
-                        include_trends=True, y_label="W/m^2", label="45", tick_color="g")  
-    plot_data_with_reg_line(zonal_data.year, zonal_data["pos_75"], title="60 to 90", axis=ax[0],
-                        include_trends=True, y_label="W/m^2", label="75", tick_color="g") 
+def plot_single_year_by_latitude_from_zonal_average(zonal_data, selected_year):
+    plt.plot(zonal_data.lat, zonal_data.sel(year=selected_year))

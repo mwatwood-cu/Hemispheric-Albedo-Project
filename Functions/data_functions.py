@@ -1,3 +1,4 @@
+from tracemalloc import start
 from regex import D
 import xarray as xr
 import numpy as np
@@ -7,6 +8,8 @@ import seaborn as sns
 from scipy.interpolate import CubicSpline
 import matplotlib.pyplot as plt
 
+data_path = "/Users/mawa7160/dev/data/CERES/"
+
 def pick_CERES_data(dataset, start_yr, start_mon, end_yr, end_mon):
     start = start_yr+"-"+start_mon
     end = end_yr+"-"+end_mon
@@ -15,7 +18,7 @@ def pick_CERES_data(dataset, start_yr, start_mon, end_yr, end_mon):
 
 
 def create_lat_weights():
-    lat_weights = pd.read_csv("./Data/lat_weights.csv", header=0)
+    lat_weights = pd.read_csv(data_path+"lat_weights.csv", header=0)
     lat_weights = lat_weights.to_numpy()
 
     lats = lat_weights[0:-1, 0]
@@ -72,6 +75,12 @@ def apply_time_averaging(dataset, leap_year_method=0, feb_leap_year_correction=2
     feb_non_leap_year_correction=28.45, running_length=0, start_mon="01"):
 
     month_length = dataset.time.dt.days_in_month
+
+    # Incorrectly calculate with equal weight for each month
+    if(leap_year_method == -1):
+        month_length_equal = np.ones_like(month_length)
+        specific_t_weighted = calculate_weighted_mean(dataset, month_length_equal)
+        return specific_t_weighted
 
     # When not using a leap year correction
     if(leap_year_method == 0):
@@ -199,7 +208,48 @@ def create_CERES_hemisphere_data(dataset, category, use_time_weighting=True, use
     ds_new = xr.Dataset({"nh":nh_ts_mean, "sh":sh_ts_mean, "global":all_ts_mean})
     return ds_new
 
-def create_CERES_20_degree_zonal_data(dataset, category,
+def take_yearly_average_from_daily_data(dataset, start_year, end_year):
+    num_years = int(end_year)-int(start_year)+1
+
+    four_year_weights = np.ones((366,4))
+    four_year_weights[0,0] = 0.25 # Account for missing from years 1,2, and 3
+
+    four_year_weights[0,1] = 1 # Use the full first day of year
+    four_year_weights[-1,1] = 0.25 # First year take 1/4 day from second year
+    four_year_weights[0,2] = 0.75 # Account for missing 1/4 in year 2
+    four_year_weights[-1,2] = 0.5 # Take 1/4 day from year 3
+    four_year_weights[0,3] = 0.5 # Account for missing 1/2 day from year 1 and 2
+    four_year_weights[-1,3] = 0.75 # Take 1/4 day from year 4
+
+    nh = []
+    sh = []
+    glob = []
+    years = []
+    for year_index in range(num_years):
+        this_year_str = str(int(start_year)+year_index)
+        next_year_str = str(int(start_year)+year_index+1)
+
+        leap_year_index = (int(start_year)+year_index)%4 # 0 means it is a leap year
+        if(leap_year_index != 0):
+            this_year = dataset.sel(time=slice(this_year_str+"-01-01",next_year_str+"-01-01"))
+        else:
+            this_year = dataset.sel(time=slice(this_year_str+"-01-01", this_year_str+"-12-31"))
+        nh_dat = apply_spatial_weights(this_year, low_lat=0, high_lat=90)
+        sh_dat = apply_spatial_weights(this_year, low_lat=-90, high_lat=0)
+        global_dat = apply_spatial_weights(this_year, low_lat=-90, high_lat=90)
+
+        nh_dat = np.average(nh_dat, weights=four_year_weights[:,leap_year_index], axis=0)
+        sh_dat = np.average(sh_dat, weights=four_year_weights[:,leap_year_index], axis=0)
+        global_dat = np.average(global_dat, weights=four_year_weights[:,leap_year_index], axis=0)
+
+        years.append(int(start_year)+year_index)
+        nh.append(nh_dat)
+        sh.append(sh_dat)
+        glob.append(global_dat)
+
+    return xr.Dataset({"nh":nh, "sh":sh,"global":glob,}, coords={"years":years})
+
+def create_CERES_EBAF_zonal_data(dataset, category, zone_size,
     remove_leap_year=1, running_length=0, start_yr="2001", start_mon="01", end_yr="2022", end_mon="01"):
     specific_dat = dataset[category]
 
@@ -208,38 +258,30 @@ def create_CERES_20_degree_zonal_data(dataset, category,
     specific_t_weighted = apply_time_averaging(cleaned_dat, leap_year_method=remove_leap_year, 
         running_length=running_length, start_mon=start_mon)
 
-    neg_80 = apply_spatial_weights(specific_t_weighted, low_lat=-90, high_lat=-70)
-    neg_60 = apply_spatial_weights(specific_t_weighted, low_lat=-70, high_lat=-50)
-    neg_40 = apply_spatial_weights(specific_t_weighted, low_lat=-50, high_lat=-30)
-    neg_20 = apply_spatial_weights(specific_t_weighted, low_lat=-30, high_lat=-10)
-    zero_band = apply_spatial_weights(specific_t_weighted, low_lat=-10, high_lat=10)
-    pos_20 = apply_spatial_weights(specific_t_weighted, low_lat=10, high_lat=30)
-    pos_40 = apply_spatial_weights(specific_t_weighted, low_lat=30, high_lat=50)
-    pos_60 = apply_spatial_weights(specific_t_weighted, low_lat=50, high_lat=70)
-    pos_80 = apply_spatial_weights(specific_t_weighted, low_lat=70, high_lat=90)
+    num_zones = int(180/zone_size)
+    num_years = len(specific_t_weighted.year)
 
-    ds_new = xr.Dataset({"neg_80":neg_80, "neg_60":neg_60, "neg_40":neg_40, "neg_20":neg_20,
-                        "zero":zero_band,
-                        "pos_80":pos_80, "pos_60":pos_60, "pos_40":pos_40, "pos_20":pos_20,}) 
-    return ds_new
+    raw_data = np.ndarray((num_years, num_zones))
+    lats = np.ndarray((num_zones))
+    for i in range(num_zones):
+        zone_start = -90+i*zone_size
+        lats[i] = zone_start+zone_size/2
+        raw_data[:,i]  = apply_spatial_weights(specific_t_weighted, low_lat=zone_start, high_lat=zone_start+zone_size)
 
-def create_CERES_30_degree_zonal_data(dataset, category,
-    remove_leap_year=1, running_length=0, start_yr="2001", start_mon="01", end_yr="2022", end_mon="01"):
-    specific_dat = dataset[category]
+    da = xr.DataArray(raw_data, coords=[specific_t_weighted.year, lats], dims=["year", "lat"])
+    da.attrs["zonal_size"] = zone_size
 
-    cleaned_dat = pick_CERES_data(specific_dat, start_yr, start_mon, end_yr, end_mon)
+    return da
 
-    specific_t_weighted = apply_time_averaging(cleaned_dat, leap_year_method=remove_leap_year, 
-        running_length=running_length, start_mon=start_mon)
+def make_zonal_dataset_name(zone_start, zone_size):
+    if(zone_start<0 and zone_start+zone_size<=0):
+        zone_name = "neg_"+str(np.abs(np.round(zone_start+zone_size/2,1)))
+    else:
+        zone_name = str(np.abs(np.round(zone_start+zone_size/2,1)))
 
-    neg_75 = apply_spatial_weights(specific_t_weighted, low_lat=-90, high_lat=-60)
-    neg_45 = apply_spatial_weights(specific_t_weighted, low_lat=-60, high_lat=-30)
-    neg_15 = apply_spatial_weights(specific_t_weighted, low_lat=-30, high_lat=0)
+    if(zone_name[-1]=='0'):
+        zone_name = zone_name[:-2]
+    else:
+        zone_name = zone_name.replace(".","_")
 
-    pos_15 = apply_spatial_weights(specific_t_weighted, low_lat=0, high_lat=30)
-    pos_45 = apply_spatial_weights(specific_t_weighted, low_lat=30, high_lat=60)
-    pos_75 = apply_spatial_weights(specific_t_weighted, low_lat=60, high_lat=90)
-
-    ds_new = xr.Dataset({"neg_75":neg_75, "neg_45":neg_45, "neg_15":neg_15,
-                        "pos_75":pos_75, "pos_45":pos_45, "pos_15":pos_15}) 
-    return ds_new
+    return zone_name

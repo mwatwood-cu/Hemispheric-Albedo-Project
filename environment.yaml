@@ -1,0 +1,12 @@
+name: science_dev
+dependencies:
+    - python
+    - numpy
+    - xarray
+    - matplotlib
+    - scikit-learn
+    - pandas
+    - seaborn
+    - scipy   
+    - cartopy
+    - regex
