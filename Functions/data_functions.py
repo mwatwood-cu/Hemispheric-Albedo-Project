@@ -1,12 +1,7 @@
-from tracemalloc import start
-from regex import D
 import xarray as xr
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
-import seaborn as sns
 from scipy.interpolate import CubicSpline
-import matplotlib.pyplot as plt
 
 data_path = "/Users/mawa7160/dev/data/CERES/"
 

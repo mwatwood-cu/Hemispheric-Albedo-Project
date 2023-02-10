@@ -1,5 +1,6 @@
 from matplotlib import pyplot as plt
 import cartopy.crs as ccrs
+import scipy
 
 from data_functions import *
 
