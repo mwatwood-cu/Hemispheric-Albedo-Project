@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./Albedo_project/data_processing"
+    ]
+}
