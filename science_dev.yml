@@ -1,0 +1,17 @@
+name: science_dev
+channels:
+  - defaults
+dependencies:
+  - scikit-learn
+  - scipy
+  - cartopy
+  - pandas
+  - matplotlib
+  - seaborn
+  - python=3.10
+  - xarray
+  - numpy
+  - pip
+  - ipykernel
+  - netcdf4
+prefix: /opt/miniconda3/envs/science_dev
