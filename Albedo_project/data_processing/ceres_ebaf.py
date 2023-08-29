@@ -1,6 +1,7 @@
 import xarray as xr
 import numpy as np
 import pandas as pd
+from datetime import datetime
 from scipy.interpolate import CubicSpline
 from scipy.stats import linregress
 import os
@@ -32,7 +33,7 @@ def create_lat_weights(method: int, data_path: str = DATA_PATH, desired_lat_locs
         cosine_vals = np.cos(lats / 180 * np.pi)
         normalized_cosine = cosine_vals / np.sum(cosine_vals)
         vals = normalized_cosine
-    else: # No weighting
+    else:  # No weighting
         lats = np.arange(-90, 90, 1)
         vals = np.ones_like(lats)
     if desired_lat_locs is None:
@@ -42,7 +43,7 @@ def create_lat_weights(method: int, data_path: str = DATA_PATH, desired_lat_locs
         return interp_vals
 
 
-def apply_spatial_weights(dataset, low_lat=0, high_lat=90, method=1):
+def apply_spatial_weights(dataset, low_lat=-90.0, high_lat=90.0, method=1):
     lat_weights = create_lat_weights(method, desired_lat_locs=dataset.lat)
 
     space_weights = xr.DataArray(data=lat_weights, coords=[dataset.lat], dims=["lat"])
@@ -72,6 +73,11 @@ def calculate_weighted_annual_mean(dataset, day_in_months):
         else:
             specific_t_weighted[i] = np.average(dataset[i * 12:(i + 1) * 12, :, :],
                                                 weights=time_weights[i * 12:(i + 1) * 12])
+    # Add a datetime coordinate
+    years_date_time = []
+    for year in specific_t_weighted.year.values:
+        years_date_time.append(datetime(year, 6, 1))
+    specific_t_weighted.coords["time"] = ("year", years_date_time)
 
     return specific_t_weighted
 
@@ -124,8 +130,8 @@ def calculate_weighted_running_mean(dataset, weights, running_length=12, use_shi
         raise Exception("Problem in data shape in running weighted running average")
 
     # Shorten the original data to match the running avg length with the date being the center point of the running avg
-    left = int(running_length/2-1)
-    right = int(len(dataset)-running_length/2-1)
+    left = int(running_length / 2 - 1)
+    right = int(len(dataset) - running_length / 2 - 1)
     specific_t_weighted = dataset[left:right, :, :]
     specific_t_weighted.data = t_weighted
 
@@ -188,40 +194,62 @@ def apply_time_averaging(dataset, averaging_method=0, feb_leap_year_correction=2
         return specific_t_weighted
 
 
-def create_hemisphere_data(dataset, time_weighting=1, space_weighting=1, start_yr="2001",
-                           start_mon="01", end_yr="2022", end_mon="01", ly_feb=27.65, nly_feb=28.45,
-                           running_length=0, use_ocean_land=False, ocean_mask=None):
-    cleaned_dat = slice_dataset_with_year_and_month(dataset, start_yr, start_mon, end_yr, end_mon)
+def create_hemisphere_data(dataset, time_weighting=2, space_weighting=1, start_yr="2001",
+                           start_mon="01", end_yr="2023", end_mon="01", ly_feb=27.65, nly_feb=28.45,
+                           running_length=0, use_mask=False, mask_data=None,
+                           masked_name=None, unmasked_name=None):
+    return create_zonal_data(dataset, time_weighting=time_weighting, space_weighting=space_weighting,
+                             start_yr=start_yr, end_yr=end_yr, start_mon=start_mon, end_mon=end_mon,
+                             ly_feb=ly_feb, nly_feb=nly_feb, running_length=running_length,
+                             use_mask=use_mask, mask_data=mask_data,
+                             masked_name=masked_name, unmasked_name=unmasked_name,
+                             zonal_cuts=1, zonal_names=["sh", "nh"])
 
+
+def create_zonal_data(dataset, start_yr="2001", start_mon="01", end_yr="2023", end_mon="01", space_weighting=1,
+                      time_weighting=2, running_length=0, ly_feb=27.65, nly_feb=28.45,
+                      zonal_cuts:int=1, zonal_names:list=None,
+                      use_mask:bool=False, mask_data=None, masked_name=None, unmasked_name=None):
+    cleaned_dat = slice_dataset_with_year_and_month(dataset, start_yr, start_mon, end_yr, end_mon)
     specific_t_weighted = apply_time_averaging(cleaned_dat, averaging_method=time_weighting,
                                                running_length=running_length, feb_leap_year_correction=ly_feb,
                                                feb_non_leap_year_correction=nly_feb)
+    # Create Global Average
+    ds_new = xr.Dataset({"global":apply_spatial_weights(specific_t_weighted,
+                                                        method=space_weighting)})
+    # Generate Zonal Data
+    zonal_step_size = 180 / (zonal_cuts + 1)
+    if zonal_names is None:
+        zonal_names = [f"{-90 + (zonal_step_size/2)*(x+1)}" for x in range(zonal_cuts+1)]
+    if use_mask:
+        mask_name = f"{masked_name}_mask"
+        specific_t_weighted.coords[mask_name] = (('lat', 'lon'), mask_data.data)
+        mask_t_weighted = specific_t_weighted.where(specific_t_weighted[mask_name] == 1)
+        unmasked_t_weighted = specific_t_weighted.where(specific_t_weighted[mask_name] == 0)
 
-    if use_ocean_land:
-        specific_t_weighted.coords["ocean_mask"] = (('lat', 'lon'), ocean_mask.data)
-        ocean_t_weighted = specific_t_weighted.where(specific_t_weighted.ocean_mask == 1)
-        land_t_weighted = specific_t_weighted.where(specific_t_weighted.ocean_mask == 0)
+        # Make Global Masked Values
+        all_ts_masked_mean = apply_spatial_weights(mask_t_weighted, method=space_weighting)
+        all_ts_unmasked_mean = apply_spatial_weights(unmasked_t_weighted, method=space_weighting)
 
-        nh_ts_ocean_mean = apply_spatial_weights(ocean_t_weighted, low_lat=0, high_lat=90, method=space_weighting)
-        nh_ts_land_mean = apply_spatial_weights(land_t_weighted, low_lat=0, high_lat=90, method=space_weighting)
-        sh_ts_ocean_mean = apply_spatial_weights(ocean_t_weighted, low_lat=-90, high_lat=0, method=space_weighting)
-        sh_ts_land_mean = apply_spatial_weights(land_t_weighted, low_lat=-90, high_lat=0, method=space_weighting)
-        all_ts_ocean_mean = apply_spatial_weights(ocean_t_weighted, low_lat=-90, high_lat=90, method=space_weighting)
-        all_ts_land_mean = apply_spatial_weights(land_t_weighted, low_lat=-90, high_lat=90, method=space_weighting)
-        ds_new = xr.Dataset({"nh_ocean": nh_ts_ocean_mean,
-                             "sh_ocean": sh_ts_ocean_mean,
-                             "global_ocean": all_ts_ocean_mean,
-                             "nh_land": nh_ts_land_mean,
-                             "sh_land": sh_ts_land_mean,
-                             "global_land": all_ts_land_mean, })
-        return ds_new
-    else:
-        nh_ts_mean = apply_spatial_weights(specific_t_weighted, low_lat=0, high_lat=90, method=space_weighting)
-        sh_ts_mean = apply_spatial_weights(specific_t_weighted, low_lat=-90, high_lat=0, method=space_weighting)
-        all_ts_mean = apply_spatial_weights(specific_t_weighted, low_lat=-90, high_lat=90, method=space_weighting)
+        ds_new = ds_new.assign({f"global_{masked_name}": all_ts_masked_mean,
+                                f"global_{unmasked_name}": all_ts_unmasked_mean})
 
-        ds_new = xr.Dataset({"nh": nh_ts_mean, "sh": sh_ts_mean, "global": all_ts_mean})
-        return ds_new
+    for i in range(zonal_cuts+1):
+        start_lat = -90 + zonal_step_size*i
+        stop_lat = start_lat + zonal_step_size
+        zonal_ts_mean = apply_spatial_weights(specific_t_weighted, low_lat=start_lat, high_lat=stop_lat,
+                                              method=space_weighting)
+        ds_new = ds_new.assign({f"{zonal_names[i]}": zonal_ts_mean})
+
+        if use_mask:
+            masked_zonal_ts_mean = apply_spatial_weights(mask_t_weighted, low_lat=start_lat, high_lat=stop_lat,
+                                                         method=space_weighting)
+            unmasked_zonal_ts_mean = apply_spatial_weights(unmasked_t_weighted, low_lat=start_lat, high_lat=stop_lat,
+                                                    method=space_weighting)
+            ds_new = ds_new.assign({f"{zonal_names[i]}_{masked_name}": masked_zonal_ts_mean,
+                                    f"{zonal_names[i]}_{unmasked_name}": unmasked_zonal_ts_mean})
+    return ds_new
+
 
 def lin_regress_slope(data_in):
     results = linregress(data_in.year, data_in[dict(paired_points=0)]).slope
