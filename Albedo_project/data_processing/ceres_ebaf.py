@@ -7,7 +7,8 @@ from scipy.stats import linregress
 import os
 
 DATA_PATH = "/Users/mawa7160/dev/data/CERES/"
-
+LEAP_YEAR_OFFSET = (1-0.2425)/2
+NON_LEAP_YEAR_OFFSET = 0.2425/2
 
 def slice_dataset_with_year_and_month(ceres_dataset: xr.Dataset, start_yr: str, start_mon, end_yr, end_mon):
     """
@@ -71,7 +72,7 @@ def calculate_weighted_annual_mean(dataset, day_in_months):
             specific_t_weighted[i] = np.average(dataset[i * 12:(i + 1) * 12, :, :],
                                                 weights=time_weights[i * 12:(i + 1) * 12], axis=0)
         else:
-            specific_t_weighted[i] = np.average(dataset[i * 12:(i + 1) * 12, :, :],
+            specific_t_weighted[i] = np.average(dataset[i * 12:(i + 1) * 12],
                                                 weights=time_weights[i * 12:(i + 1) * 12])
     # Add a datetime coordinate
     years_date_time = []
@@ -99,11 +100,11 @@ def calculate_weighted_running_mean(dataset, weights, running_length=12, use_shi
                 right = idx + int(running_length / 2)
                 time_weights = (local_weights[left:right]).copy()
                 if (time_weights == 29).sum() == 1:
-                    time_weights[0] = time_weights[0] - 3 / 8
-                    time_weights[running_length - 1] = time_weights[running_length - 1] - 3 / 8
+                    time_weights[0] = time_weights[0] - LEAP_YEAR_OFFSET
+                    time_weights[running_length - 1] = time_weights[running_length - 1] - LEAP_YEAR_OFFSET
                 else:
-                    time_weights[0] = time_weights[0] + 1 / 8
-                    time_weights[running_length - 1] = time_weights[running_length - 1] + 1 / 8
+                    time_weights[0] = time_weights[0] + NON_LEAP_YEAR_OFFSET
+                    time_weights[running_length - 1] = time_weights[running_length - 1] + NON_LEAP_YEAR_OFFSET
 
                 t_weighted[x, :, :] = np.average(dataset[left:right], weights=time_weights, axis=0)
     # TODO not sure if this works or when I needed this
@@ -138,13 +139,13 @@ def calculate_weighted_running_mean(dataset, weights, running_length=12, use_shi
     return specific_t_weighted
 
 
-def apply_time_averaging(dataset, averaging_method=0, feb_leap_year_correction=27.65,
-                         feb_non_leap_year_correction=28.45, running_length=0):
+def apply_time_averaging(dataset, averaging_method=2, feb_leap_year_correction=27.638,
+                         feb_non_leap_year_correction=28.454, running_length=0):
     month_length = dataset.time.dt.days_in_month
 
     # Incorrectly calculate with equal weight for each month
     if (averaging_method == -1):
-        month_length_equal = np.ones_like(month_length)
+        month_length_equal = 30*np.ones_like(month_length)
         specific_t_weighted = calculate_weighted_annual_mean(dataset, month_length_equal)
         return specific_t_weighted
 
@@ -179,11 +180,11 @@ def apply_time_averaging(dataset, averaging_method=0, feb_leap_year_correction=2
             for i in range(year_count):
                 year_months = month_length[12 * i:12 * (i + 1)]
                 if (year_months.where(year_months.isin(29), drop=True).size == 1):
-                    month_length.values[i * 12] = month_length.values[i * 12] - 3 / 8
-                    month_length.values[(i + 1) * 12 - 1] = month_length.values[(i + 1) * 12 - 1] - 3 / 8
+                    month_length.values[i * 12] = month_length.values[i * 12] - LEAP_YEAR_OFFSET
+                    month_length.values[(i + 1) * 12 - 1] = month_length.values[(i + 1) * 12 - 1] - LEAP_YEAR_OFFSET
                 else:
-                    month_length.values[i * 12] = month_length.values[i * 12] + 1 / 8
-                    month_length.values[(i + 1) * 12 - 1] = month_length.values[(i + 1) * 12 - 1] + 1 / 8
+                    month_length.values[i * 12] = month_length.values[i * 12] + NON_LEAP_YEAR_OFFSET
+                    month_length.values[(i + 1) * 12 - 1] = month_length.values[(i + 1) * 12 - 1] + NON_LEAP_YEAR_OFFSET
             specific_t_weighted = calculate_weighted_annual_mean(dataset, month_length)
         elif running_length == 12:
             specific_t_weighted = calculate_weighted_running_mean(dataset, month_length,
@@ -220,7 +221,7 @@ def create_zonal_data(dataset, start_yr="2001", start_mon="01", end_yr="2023", e
     # Generate Zonal Data
     zonal_step_size = 180 / (zonal_cuts + 1)
     if zonal_names is None:
-        zonal_names = [f"{-90 + (zonal_step_size/2)*(x+1)}" for x in range(zonal_cuts+1)]
+        zonal_names = [f"{-90 + (zonal_step_size)*(x+1)-zonal_step_size/2}" for x in range(zonal_cuts+1)]
     if use_mask:
         mask_name = f"{masked_name}_mask"
         specific_t_weighted.coords[mask_name] = (('lat', 'lon'), mask_data.data)

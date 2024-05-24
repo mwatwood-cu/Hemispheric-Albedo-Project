@@ -8,8 +8,9 @@ import pandas as pd
 
 # Data provided must be sorted by year
 def plot_hemisphere_and_global_by_year(time_scale, data, title="NH-SH-Global",
-                                       y_label=r"Solar Ins. W/m$^2$", fixed_ylim=False, set_x_ticks=True, axis=None,
-                                       set_short_x_ticks=False, include_trends=False, add_legend=True):
+                                       y_label=r"W m$^{-2}$", fixed_ylim=False, set_x_ticks=True, axis=None,
+                                       set_short_x_ticks=False, include_trends=False, add_legend=True,
+                                       title_fontsize=20, label_fontsize=16):
     if (axis == None):
         axis = plt.gca()
     if add_legend:
@@ -25,14 +26,14 @@ def plot_hemisphere_and_global_by_year(time_scale, data, title="NH-SH-Global",
         axis.set_xticks([2000, 2003, 2006, 2009, 2012, 2015, 2018, 2021])
     if (set_short_x_ticks):
         axis.set_xticks([2005, 2010, 2015, 2020])
-    axis.set_xlabel("Year", fontsize=20)
+    axis.set_xlabel("Year", fontsize=title_fontsize)
     if (fixed_ylim):
         axis.set_ylim([339.6, 340.4])
-    axis.set_ylabel(y_label, fontsize=20)
-    axis.set_title(title, fontsize=20)
-    axis.tick_params(axis='both', which='major', labelsize=16)
+    axis.set_ylabel(y_label, fontsize=title_fontsize)
+    axis.set_title(title, fontsize=title_fontsize)
+    axis.tick_params(axis='both', which='major', labelsize=label_fontsize)
     if add_legend:
-        axis.legend(fontsize=16, loc="upper right")
+        axis.legend(fontsize=label_fontsize, loc="upper right")
 
     if (include_trends):
         global_results = scipy.stats.linregress(time_scale, data["global"])
@@ -53,7 +54,7 @@ def plot_yearly_data_with_reg_line(time, data, title="Data With Regression", lab
                             include_trends=False, print_out=False, marker="x"):
     if axis is None:
         axis = plt.gca()
-    if label is not None:
+    if label=="":
         axis.plot(time, data, color=tick_color, marker=marker)
     else:
         axis.plot(time, data, color=tick_color, marker=marker, label=label)
@@ -74,15 +75,14 @@ def plot_yearly_data_with_reg_line(time, data, title="Data With Regression", lab
         axis.plot(x, line, color=tick_color, linestyle='-',
                   label=label + " Trend={:.3f}/Decade with p-value={:.5f}".format(reg_results.slope*10,
                                                                                   reg_results.pvalue))
-        axis.legend()
         if print_out:
             print(title + " " + str((10*reg_results.slope).round(3)) + " W/m^2 per Decade. With R^2 " + str(
                 reg_results.rvalue ** 2))
 
-
+    axis.legend()
 
 def plot_monthly_data_with_reg_line(time, data, title="Data With Regression", label="", tick_color="b",
-                            y_label="W/m^2", axis=None, include_trends=False, print_out=False, marker="x"):
+                            y_label="W m$^{-2}$", axis=None, include_trends=False, print_out=False, marker="x"):
     if axis is None:
         axis = plt.gca()
     if label is not None:
