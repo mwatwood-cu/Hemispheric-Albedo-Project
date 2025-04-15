@@ -7,7 +7,7 @@ from scipy.stats import linregress
 import os
 
 DATA_PATH = "/Users/mawa7160/dev/data/CERES/"
-LEAP_YEAR_OFFSET = (1-0.2425)/2
+LEAP_YEAR_OFFSET = - (1-0.2425)/2
 NON_LEAP_YEAR_OFFSET = 0.2425/2
 
 def slice_dataset_with_year_and_month(ceres_dataset: xr.Dataset, start_yr: str, start_mon, end_yr, end_mon):
@@ -83,6 +83,10 @@ def calculate_weighted_annual_mean(dataset, day_in_months):
     return specific_t_weighted
 
 
+def calculate_weighted_mean(dataset, weights):
+    weighted_dataset = dataset.weighted(weights)
+    return weighted_dataset.mean().values
+
 def calculate_weighted_running_mean(dataset, weights, running_length=12, use_shifting_weights=False):
     local_weights = weights.values.astype("float").copy()
     if len(dataset.shape) == 3:
@@ -140,17 +144,19 @@ def calculate_weighted_running_mean(dataset, weights, running_length=12, use_shi
 
 
 def apply_time_averaging(dataset, averaging_method=2, feb_leap_year_correction=27.638,
-                         feb_non_leap_year_correction=28.454, running_length=0):
+                         feb_non_leap_year_correction=28.454, running_length=0, leap_year_offest=LEAP_YEAR_OFFSET,
+                         non_leap_year_offset=NON_LEAP_YEAR_OFFSET):
     month_length = dataset.time.dt.days_in_month
+    month_length.values = month_length.values.astype("float")
 
     # Incorrectly calculate with equal weight for each month
-    if (averaging_method == -1):
+    if averaging_method == -1:
         month_length_equal = 30*np.ones_like(month_length)
         specific_t_weighted = calculate_weighted_annual_mean(dataset, month_length_equal)
         return specific_t_weighted
 
     # When not using a leap year correction
-    if (averaging_method == 0):
+    if averaging_method == 0:
         # First case no running average
         if (running_length == 0):
             specific_t_weighted = calculate_weighted_annual_mean(dataset, month_length)
@@ -161,30 +167,30 @@ def apply_time_averaging(dataset, averaging_method=2, feb_leap_year_correction=2
         return specific_t_weighted
 
     # Use the February only correction (Matt method)
-    if (averaging_method == 1):
-        month_length.values = month_length.values.astype("float")
+    if averaging_method == 1:
         month_length[month_length == 28] = feb_non_leap_year_correction
         month_length[month_length == 29] = feb_leap_year_correction
 
-        if (running_length == 0):
+        if running_length == 0:
             specific_t_weighted = calculate_weighted_annual_mean(dataset, month_length)
         else:
             specific_t_weighted = calculate_weighted_running_mean(dataset, month_length, running_length)
         return specific_t_weighted
 
     # Jake Method of weighting edge months
-    if (averaging_method == 2):
-        month_length.values = month_length.values.astype("float")
+    if averaging_method == 2:
+        weighted_years = np.array([])
+        years_date_time = np.array([])
         if running_length == 0:
             year_count = int(np.floor(len(dataset) / 12))
             for i in range(year_count):
                 year_months = month_length[12 * i:12 * (i + 1)]
                 if (year_months.where(year_months.isin(29), drop=True).size == 1):
-                    month_length.values[i * 12] = month_length.values[i * 12] - LEAP_YEAR_OFFSET
-                    month_length.values[(i + 1) * 12 - 1] = month_length.values[(i + 1) * 12 - 1] - LEAP_YEAR_OFFSET
+                    month_length.values[i * 12] = month_length.values[i * 12] + leap_year_offest
+                    month_length.values[(i + 1) * 12 - 1] = month_length.values[(i + 1) * 12 - 1] + leap_year_offest
                 else:
-                    month_length.values[i * 12] = month_length.values[i * 12] + NON_LEAP_YEAR_OFFSET
-                    month_length.values[(i + 1) * 12 - 1] = month_length.values[(i + 1) * 12 - 1] + NON_LEAP_YEAR_OFFSET
+                    month_length.values[i * 12] = month_length.values[i * 12] + non_leap_year_offset
+                    month_length.values[(i + 1) * 12 - 1] = month_length.values[(i + 1) * 12 - 1] + non_leap_year_offset
             specific_t_weighted = calculate_weighted_annual_mean(dataset, month_length)
         elif running_length == 12:
             specific_t_weighted = calculate_weighted_running_mean(dataset, month_length,
@@ -194,27 +200,63 @@ def apply_time_averaging(dataset, averaging_method=2, feb_leap_year_correction=2
                                                                   running_length)
         return specific_t_weighted
 
+    # Matt's method of weighting edge months - 14 month
+    if averaging_method == 3:
+        if len(dataset.shape) == 3:
+            weighted_years = np.zeros((int(np.floor(len(dataset) / 12)), dataset.shape[1], dataset.shape[2]))
+        else:
+            weighted_years = np.zeros(int(np.floor(len(dataset) / 12)))
+        years_date_time = np.array([])
+        year_count = int(np.floor(len(dataset) / 12))
+        for i in range(year_count):
+            year_months_12 = month_length[(12 * i) + 1:12 * (i + 1)+1]
+            year_months_14 = month_length[12 * i:12 * (i + 1)+2].copy()
+            if year_months_12.where(year_months_12.isin(29), drop=True).size == 1:
+                year_months_14.values[0] = leap_year_offest
+                year_months_14.values[-1] = leap_year_offest
+            else:
+                year_months_14.values[0] = non_leap_year_offset
+                year_months_14.values[-1] = non_leap_year_offset
+            if(len(dataset.shape) == 3):
+                year_weighted = np.average(dataset[12 * i:12 * (i + 1)+2, :, :], weights=year_months_14, axis=0)
+            else:
+                year_weighted = np.average(dataset[12 * i:12 * (i + 1)+2], weights=year_months_14)
+            weighted_years[i] = year_weighted
+            years_date_time = np.append(years_date_time, datetime(dataset.time.dt.year.values[12*(i+1)],  6, 1))
+        # Create a new dataarray with the yearly data above
+        if len(dataset.shape) == 3:
+            specific_t_weighted = xr.DataArray(weighted_years, coords=[dataset.time[3::12].values, dataset.lat, dataset.lon], dims=["time", "lat", "lon"])
+        else:
+            specific_t_weighted = xr.DataArray(weighted_years, coords=[dataset.time[3::12].values], dims=["time"])
+        # Add a datetime coordinate
+        specific_t_weighted = specific_t_weighted.assign_coords(year=("time",years_date_time))
+        return specific_t_weighted
+
 
 def create_hemisphere_data(dataset, time_weighting=2, space_weighting=1, start_yr="2001",
                            start_mon="01", end_yr="2023", end_mon="01", ly_feb=27.65, nly_feb=28.45,
                            running_length=0, use_mask=False, mask_data=None,
-                           masked_name=None, unmasked_name=None):
+                           masked_name=None, unmasked_name=None, ly_offset=LEAP_YEAR_OFFSET,
+                           nly_offset=NON_LEAP_YEAR_OFFSET):
     return create_zonal_data(dataset, time_weighting=time_weighting, space_weighting=space_weighting,
                              start_yr=start_yr, end_yr=end_yr, start_mon=start_mon, end_mon=end_mon,
                              ly_feb=ly_feb, nly_feb=nly_feb, running_length=running_length,
                              use_mask=use_mask, mask_data=mask_data,
                              masked_name=masked_name, unmasked_name=unmasked_name,
-                             zonal_cuts=1, zonal_names=["sh", "nh"])
+                             zonal_cuts=1, zonal_names=["sh", "nh"],
+                             nly_offset=nly_offset, ly_offset=ly_offset)
 
 
 def create_zonal_data(dataset, start_yr="2001", start_mon="01", end_yr="2023", end_mon="01", space_weighting=1,
                       time_weighting=2, running_length=0, ly_feb=27.65, nly_feb=28.45,
                       zonal_cuts:int=1, zonal_names:list=None,
-                      use_mask:bool=False, mask_data=None, masked_name=None, unmasked_name=None):
+                      use_mask:bool=False, mask_data=None, masked_name=None, unmasked_name=None,
+                      nly_offset=NON_LEAP_YEAR_OFFSET, ly_offset=LEAP_YEAR_OFFSET):
     cleaned_dat = slice_dataset_with_year_and_month(dataset, start_yr, start_mon, end_yr, end_mon)
     specific_t_weighted = apply_time_averaging(cleaned_dat, averaging_method=time_weighting,
                                                running_length=running_length, feb_leap_year_correction=ly_feb,
-                                               feb_non_leap_year_correction=nly_feb)
+                                               feb_non_leap_year_correction=nly_feb, leap_year_offest=ly_offset,
+                                               non_leap_year_offset=nly_offset)
     # Create Global Average
     ds_new = xr.Dataset({"global":apply_spatial_weights(specific_t_weighted,
                                                         method=space_weighting)})
